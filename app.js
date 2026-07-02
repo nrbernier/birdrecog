@@ -257,7 +257,10 @@ async function nextQuestion() {
   $("screen-quiz").classList.remove("answered");
   window.scrollTo({ top: 0 });
   $("options").innerHTML = "";
-  $("media-img").classList.add("hidden");
+  const img = $("media-img");
+  img.classList.add("hidden");
+  img.onload = img.onerror = null;
+  img.removeAttribute("src"); // don't flash the previous bird when reshown
   $("media-sound").classList.add("hidden");
   $("media-error").classList.add("hidden");
   $("media-loader").classList.remove("hidden");
@@ -268,9 +271,9 @@ async function nextQuestion() {
 
   question = await makeQuestion(round.mode);
   if (!round) return; // user quit while loading
-  $("media-loader").classList.add("hidden");
 
   if (!question) {
+    $("media-loader").classList.add("hidden");
     $("media-error").classList.remove("hidden");
     $("t-error").textContent = t.error;
     $("btn-retry").textContent = t.retry;
@@ -281,11 +284,23 @@ async function nextQuestion() {
     question.qMode === "sound" ? t.whoSings : t.whichBird;
 
   if (question.qMode === "photo") {
-    const img = $("media-img");
-    img.onerror = () => { img.onerror = null; img.src = question.media.fallback; };
+    // keep the spinner up until the new photo has actually loaded
+    img.onload = () => {
+      $("media-loader").classList.add("hidden");
+      img.classList.remove("hidden");
+    };
+    img.onerror = () => {
+      img.onerror = () => { // fallback failed too — offer a retry
+        $("media-loader").classList.add("hidden");
+        $("media-error").classList.remove("hidden");
+        $("t-error").textContent = t.error;
+        $("btn-retry").textContent = t.retry;
+      };
+      img.src = question.media.fallback;
+    };
     img.src = question.media.url;
-    img.classList.remove("hidden");
   } else {
+    $("media-loader").classList.add("hidden");
     $("media-sound").classList.remove("hidden");
     $("play-hint").textContent = t.playHint;
     audio.src = question.media.url;
