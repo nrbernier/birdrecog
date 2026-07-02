@@ -126,6 +126,8 @@ body {
 
 .media-error { text-align: center; padding: 24px; color: var(--muted); display: flex; flex-direction: column; gap: 12px; }
 
+#screen-quiz.answered { padding-bottom: 190px; }
+
 .options { display: flex; flex-direction: column; gap: 10px; }
 .option-btn {
   background: var(--card); color: var(--text); border: 2px solid transparent;
@@ -138,11 +140,21 @@ body {
 .option-btn:disabled { cursor: default; opacity: .95; }
 
 .feedback {
-  background: var(--card); border-radius: var(--radius); padding: 16px;
-  text-align: center; display: flex; flex-direction: column; gap: 6px;
-  animation: fade .2s ease;
+  position: fixed; left: 50%; bottom: 0; transform: translateX(-50%);
+  width: 100%; max-width: 480px; z-index: 10;
+  background: var(--card-light); border-radius: var(--radius) var(--radius) 0 0;
+  padding: 14px 16px max(14px, env(safe-area-inset-bottom));
+  text-align: center; display: flex; flex-direction: column; gap: 4px;
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, .45);
+  animation: slideup .22s ease;
+}
+@keyframes slideup {
+  from { transform: translate(-50%, 100%); }
+  to { transform: translate(-50%, 0); }
 }
 .feedback-title { font-size: 18px; font-weight: 800; }
+.feedback.good { border-top: 3px solid var(--accent); }
+.feedback.bad { border-top: 3px solid var(--wrong); }
 .feedback.good .feedback-title { color: var(--accent); }
 .feedback.bad .feedback-title { color: var(--wrong); }
 .feedback-bird { font-size: 16px; }
@@ -158,6 +170,18 @@ body {
 .secondary-btn {
   background: var(--card); color: var(--text); border: none; border-radius: 14px;
   padding: 13px; font-size: 15px; font-weight: 700; cursor: pointer;
+}
+
+/* Short phone screens: tighten the quiz so it fits without scrolling */
+@media (max-height: 750px) {
+  #screen-quiz { gap: 10px; }
+  .question-text { font-size: 17px; }
+  .media-card, #media-img { min-height: 150px; }
+  #media-img { max-height: 32vh; }
+  .sound-box { padding: 16px; }
+  .play-btn { width: 68px; height: 68px; font-size: 26px; }
+  .options { gap: 8px; }
+  .option-btn { padding: 12px 14px; font-size: 16px; }
 }
 
 /* ---------- Results ---------- */
