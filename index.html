@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0d1a12">
+  <title>Swiss Birds — Oiseaux de Suisse</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main id="app">
+
+    <!-- ============ HOME ============ -->
+    <section id="screen-home" class="screen">
+      <div class="lang-switch">
+        <button id="lang-en" class="lang-btn">EN</button>
+        <button id="lang-fr" class="lang-btn">FR</button>
+      </div>
+
+      <header class="hero">
+        <div class="hero-emoji">🐦</div>
+        <h1 id="t-title">Swiss Birds</h1>
+        <p id="t-tagline" class="tagline"></p>
+      </header>
+
+      <div class="stats-card">
+        <div class="stat">
+          <div class="stat-value" id="stat-level">1</div>
+          <div class="stat-label" id="t-level"></div>
+        </div>
+        <div class="stat">
+          <div class="stat-value" id="stat-streak">0</div>
+          <div class="stat-label" id="t-best-streak"></div>
+        </div>
+        <div class="stat">
+          <div class="stat-value" id="stat-accuracy">–</div>
+          <div class="stat-label" id="t-accuracy"></div>
+        </div>
+      </div>
+      <div class="xp-bar"><div class="xp-fill" id="xp-fill"></div></div>
+      <div class="xp-text" id="xp-text"></div>
+
+      <nav class="mode-buttons">
+        <button class="mode-btn" data-mode="photo">
+          <span class="mode-icon">📷</span><span id="t-photos"></span>
+        </button>
+        <button class="mode-btn" data-mode="sound">
+          <span class="mode-icon">🎵</span><span id="t-sounds"></span>
+        </button>
+        <button class="mode-btn" data-mode="mixed">
+          <span class="mode-icon">🎲</span><span id="t-mixed"></span>
+        </button>
+      </nav>
+
+      <footer class="credits" id="t-credits"></footer>
+    </section>
+
+    <!-- ============ QUIZ ============ -->
+    <section id="screen-quiz" class="screen hidden">
+      <div class="quiz-top">
+        <button id="btn-quit" class="icon-btn" aria-label="Quit">✕</button>
+        <div class="progress"><div class="progress-fill" id="progress-fill"></div></div>
+        <div class="streak-badge" id="streak-badge">🔥 0</div>
+      </div>
+
+      <h2 class="question-text" id="question-text"></h2>
+
+      <div class="media-card" id="media-card">
+        <div class="loader hidden" id="media-loader"><div class="spinner"></div><span id="t-loading"></span></div>
+        <img id="media-img" class="hidden" alt="?" draggable="false">
+        <div id="media-sound" class="sound-box hidden">
+          <button id="btn-play" class="play-btn">▶</button>
+          <div class="eq" id="eq"><i></i><i></i><i></i><i></i><i></i></div>
+          <span class="play-hint" id="play-hint"></span>
+        </div>
+        <div id="media-error" class="media-error hidden">
+          <p id="t-error"></p>
+          <button id="btn-retry" class="secondary-btn"></button>
+        </div>
+      </div>
+
+      <div class="options" id="options"></div>
+
+      <div class="feedback hidden" id="feedback">
+        <div class="feedback-title" id="feedback-title"></div>
+        <div class="feedback-bird" id="feedback-bird"></div>
+        <div class="feedback-sci" id="feedback-sci"></div>
+        <a class="feedback-src" id="feedback-src" target="_blank" rel="noopener"></a>
+        <button class="primary-btn" id="btn-next"></button>
+      </div>
+    </section>
+
+    <!-- ============ RESULTS ============ -->
+    <section id="screen-results" class="screen hidden">
+      <div class="results-card">
+        <div class="results-emoji" id="results-emoji">🎉</div>
+        <h2 id="t-round-done"></h2>
+        <div class="results-score" id="results-score"></div>
+        <div class="results-details" id="results-details"></div>
+      </div>
+      <button class="primary-btn" id="btn-again"></button>
+      <button class="secondary-btn" id="btn-home"></button>
+    </section>
+
+  </main>
+  <script src="birds.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
