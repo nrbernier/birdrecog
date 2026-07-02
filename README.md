@@ -4,6 +4,8 @@ A phone-friendly quiz game to learn to recognize the ~45 most common bird
 species of Switzerland, by photo and by song. Bird names can be shown in
 English or French.
 
+**Play it here: https://nrbernier.github.io/birdrecog/**
+
 ## Run it
 
 No build step, no dependencies — it's plain HTML/CSS/JS. Just serve the
