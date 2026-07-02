@@ -1,6 +1,8 @@
 /* Swiss bird recognition quiz.
-   Photos come from Wikipedia page summaries, sounds from Wikimedia Commons
-   (mostly xeno-canto recordings). Media URLs are cached in localStorage. */
+   Photos come from Wikipedia page summaries plus Wikimedia Commons search
+   (several per species, so one photo can't be memorized), sounds from
+   Wikimedia Commons (mostly xeno-canto recordings). Media URLs are cached
+   in localStorage. */
 
 const ROUND_LEN = 10;
 const N_OPTIONS = 4;
@@ -19,8 +21,8 @@ const T = {
     error: "Could not load media. Check your connection.", retry: "Retry",
     roundDone: "Round complete!", xpGained: "XP earned",
     playAgain: "Play again", home: "Menu",
-    source: "Source: Wikimedia Commons", wikiSource: "Photo: Wikipedia",
-    credits: "Photos: Wikipedia · Sounds: Wikimedia Commons / xeno-canto",
+    source: "Source: Wikimedia Commons", wikiSource: "Photo source",
+    credits: "Photos: Wikipedia / Wikimedia Commons · Sounds: Wikimedia Commons / xeno-canto",
     xpToNext: "XP to next level",
   },
   fr: {
@@ -35,8 +37,8 @@ const T = {
     error: "Impossible de charger le média. Vérifie ta connexion.", retry: "Réessayer",
     roundDone: "Manche terminée !", xpGained: "XP gagnés",
     playAgain: "Rejouer", home: "Menu",
-    source: "Source : Wikimedia Commons", wikiSource: "Photo : Wikipédia",
-    credits: "Photos : Wikipédia · Sons : Wikimedia Commons / xeno-canto",
+    source: "Source : Wikimedia Commons", wikiSource: "Source de la photo",
+    credits: "Photos : Wikipédia / Wikimedia Commons · Sons : Wikimedia Commons / xeno-canto",
     xpToNext: "XP avant le prochain niveau",
   },
 };
@@ -44,7 +46,7 @@ const T = {
 /* ---------- persistent state ---------- */
 
 const STATS_KEY = "birdrecog.stats.v1";
-const MEDIA_KEY = "birdrecog.media.v1";
+const MEDIA_KEY = "birdrecog.media.v2"; // v2: multiple photos per species
 
 const stats = Object.assign(
   { lang: "en", xp: 0, bestStreak: 0, total: 0, correct: 0 },
@@ -61,28 +63,68 @@ function cacheEntry(sci) {
   return (mediaCache[sci] = mediaCache[sci] || {});
 }
 
-async function getImage(sci) {
-  const entry = cacheEntry(sci);
-  if (entry.img !== undefined) return entry.img;
+// Files whose name suggests they don't show a living bird in the field:
+// range maps, eggs (museum collections like MHNT), skeletons, drawings…
+const NON_PHOTO =
+  /map|distribution|range|egg|nest|skull|skeleton|specimen|museum|mhnt|naturalis|drawing|illustration|diagram|stamp|logo/i;
+
+async function fetchWikipediaImage(sci) {
   const url =
     "https://en.wikipedia.org/api/rest_v1/page/summary/" +
     encodeURIComponent(sci.replace(/ /g, "_"));
   const res = await fetch(url);
   if (!res.ok) throw new Error("wikipedia " + res.status);
   const j = await res.json();
-  let img = null;
-  if (j.thumbnail) {
-    // Wikimedia only renders thumbnails at fixed bucket widths; 960px is a
-    // valid bucket and phone-retina friendly. Keep the API-provided thumb
-    // as fallback in case a particular file rejects that size.
-    const src = j.originalimage && j.originalimage.width < 960
-      ? j.originalimage.source
-      : j.thumbnail.source.replace(/\/\d+px-/, "/960px-");
-    img = { url: src, fallback: j.thumbnail.source, page: j.content_urls?.desktop?.page || null };
+  if (!j.thumbnail) return [];
+  // Wikimedia only renders thumbnails at fixed bucket widths; 960px is a
+  // valid bucket and phone-retina friendly. Keep the API-provided thumb
+  // as fallback in case a particular file rejects that size.
+  const src = j.originalimage && j.originalimage.width < 960
+    ? j.originalimage.source
+    : j.thumbnail.source.replace(/\/\d+px-/, "/960px-");
+  return [{ url: src, fallback: j.thumbnail.source, page: j.content_urls?.desktop?.page || null }];
+}
+
+async function fetchCommonsImages(sci) {
+  const api =
+    "https://commons.wikimedia.org/w/api.php?action=query&format=json&origin=*" +
+    "&generator=search&gsrnamespace=6&gsrlimit=20" +
+    "&prop=imageinfo&iiprop=url|size&iiurlwidth=960" +
+    "&gsrsearch=" + encodeURIComponent(`"${sci}" filetype:bitmap`);
+  const res = await fetch(api);
+  if (!res.ok) throw new Error("commons " + res.status);
+  const j = await res.json();
+  const imgs = [];
+  for (const p of Object.values(j.query?.pages || {})) {
+    const info = p.imageinfo?.[0];
+    if (!info) continue;
+    if (!/\.jpe?g$/i.test(info.url)) continue; // maps/drawings are usually png/svg
+    if (NON_PHOTO.test(p.title)) continue;
+    if (info.width < 500 || info.height < 400) continue;
+    imgs.push({ url: info.thumburl || info.url, fallback: info.url, page: info.descriptionurl });
   }
-  entry.img = img;
+  return imgs;
+}
+
+async function getImages(sci) {
+  const entry = cacheEntry(sci);
+  if (entry.imgs !== undefined) return entry.imgs;
+  // Wikipedia's lead image is a reliably good ID photo; Commons search adds
+  // variety so a species can't be memorized from a single picture.
+  const results = await Promise.allSettled([
+    fetchWikipediaImage(sci),
+    fetchCommonsImages(sci),
+  ]);
+  if (results.every((r) => r.status === "rejected")) throw results[0].reason;
+  const seen = new Set();
+  const imgs = [];
+  for (const r of results)
+    if (r.status === "fulfilled")
+      for (const img of r.value)
+        if (!seen.has(img.url)) { seen.add(img.url); imgs.push(img); }
+  entry.imgs = imgs;
   saveMedia();
-  return entry.img;
+  return entry.imgs;
 }
 
 async function getAudio(sci) {
@@ -153,13 +195,13 @@ async function makeQuestion(mode) {
   const pool = shuffle(
     BIRDS.filter((b) => {
       if (recent.includes(b.sci)) return false;
-      const cached = mediaCache[b.sci]?.[qMode === "sound" ? "audio" : "img"];
-      return cached === undefined || (qMode === "sound" ? cached.length > 0 : !!cached);
+      const cached = mediaCache[b.sci]?.[qMode === "sound" ? "audio" : "imgs"];
+      return cached === undefined || cached.length > 0;
     })
   ).slice(0, 8);
   for (const bird of pool) {
     try {
-      const media = qMode === "sound" ? rand(await getAudio(bird.sci)) : await getImage(bird.sci);
+      const media = rand(await (qMode === "sound" ? getAudio(bird.sci) : getImages(bird.sci)));
       if (!media) continue; // no photo/recording for this species — skip it
       const options = shuffle([
         bird,

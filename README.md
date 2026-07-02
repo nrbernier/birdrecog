@@ -32,8 +32,12 @@ blocked by the browser.)
 
 ## Where the media comes from
 
-- **Photos**: the lead image of each species' Wikipedia article, via the
-  [Wikipedia REST API](https://en.wikipedia.org/api/rest_v1/).
+- **Photos**: the lead image of each species' Wikipedia article (via the
+  [Wikipedia REST API](https://en.wikipedia.org/api/rest_v1/)) plus up to
+  ~20 photos found through the Wikimedia Commons search API, so each
+  species is shown from varied angles/plumages rather than a single
+  memorizable picture. Filenames suggesting maps, eggs, skeletons or
+  drawings are filtered out.
 - **Sounds**: recordings on [Wikimedia Commons](https://commons.wikimedia.org)
   (largely mirrored from [xeno-canto](https://xeno-canto.org)), found via the
   Commons search API. OGG recordings are played through Commons' MP3
