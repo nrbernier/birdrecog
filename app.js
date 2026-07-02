@@ -212,6 +212,8 @@ async function nextQuestion() {
   const t = T[stats.lang];
   audio.pause();
   $("feedback").classList.add("hidden");
+  $("screen-quiz").classList.remove("answered");
+  window.scrollTo({ top: 0 });
   $("options").innerHTML = "";
   $("media-img").classList.add("hidden");
   $("media-sound").classList.add("hidden");
@@ -274,11 +276,17 @@ function answer(chosen, btn) {
   }
   saveStats();
 
+  let correctBtn;
   for (const el of $("options").children) {
     el.disabled = true;
-    if (el.textContent === question.bird[stats.lang]) el.classList.add("correct");
+    if (el.textContent === question.bird[stats.lang]) {
+      el.classList.add("correct");
+      correctBtn = el;
+    }
   }
   if (!good) btn.classList.add("wrong");
+  $("screen-quiz").classList.add("answered");
+  if (correctBtn) correctBtn.scrollIntoView({ block: "center", behavior: "smooth" });
 
   $("progress-fill").style.width = (100 * round.n) / ROUND_LEN + "%";
   $("streak-badge").textContent = "🔥 " + round.streak;
