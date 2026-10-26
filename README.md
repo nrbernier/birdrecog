@@ -40,13 +40,21 @@ blocked by the browser.)
 
 ## Where the media comes from
 
-- **Photos**: up to 40 per species — research-grade observations from
-  [iNaturalist](https://www.inaturalist.org) made in Switzerland (topped up
-  from the rest of Europe for rarer birds, CC-licensed photos only), the
-  lead image of the species' Wikipedia article, and photos from the
-  Wikimedia Commons search API (filenames suggesting maps, eggs, skeletons
-  or drawings are filtered out). Recently shown photos of a species are
-  avoided, so you keep seeing new pictures.
+- **Photos**: up to 50 per species, from the lead image of the species'
+  Wikipedia article, Wikimedia Commons (filenames suggesting maps, eggs,
+  skeletons or drawings are filtered out) and research-grade
+  [iNaturalist](https://www.inaturalist.org) observations made in
+  Switzerland (topped up from the rest of Europe for rarer birds,
+  CC-licensed photos only). Each photo gets a quality tier:
+  1. *curated* — Wikipedia lead image, Commons "Quality images" and
+     "Featured pictures";
+  2. *decent* — large Commons photos, iNaturalist photos others have faved;
+  3. *rough* — everything else (distant, blurry, low resolution…).
+
+  A bird you don't know yet is only shown with curated photos. After 2
+  correct answers decent photos are mixed in, and after 5 the rough ones
+  too — real-life sightings are rarely perfect. Recently shown photos of a
+  species are avoided, so you keep seeing new pictures.
 - **Sounds**: recordings on [Wikimedia Commons](https://commons.wikimedia.org)
   (largely mirrored from [xeno-canto](https://xeno-canto.org)), found via the
   Commons search API. OGG recordings are played through Commons' MP3
