@@ -75,9 +75,9 @@ const MODE_ICONS = { photo: "📷", sound: "🎵", pickphoto: "🔍", soundphoto
 /* ---------- persistent state ---------- */
 
 const STATS_KEY = "birdrecog.stats.v1";
-const MEDIA_KEY = "birdrecog.media.v5"; // v5: Wikipedia galleries + photo scores
+const MEDIA_KEY = "birdrecog.media.v6"; // v6: stricter egg/nest/museum filtering
 const SEEN_KEY = "birdrecog.seen.v1";   // recently shown media per species
-for (const old of ["birdrecog.media.v2", "birdrecog.media.v3", "birdrecog.media.v4"]) localStorage.removeItem(old);
+for (const old of ["birdrecog.media.v2", "birdrecog.media.v3", "birdrecog.media.v4", "birdrecog.media.v5"]) localStorage.removeItem(old);
 
 function load(key, dflt) {
   try { return JSON.parse(localStorage.getItem(key)) || dflt; } catch { return dflt; }
@@ -127,8 +127,35 @@ function isFresh(list, at, partial) {
 
 // Files whose name suggests they don't show a living bird in the field:
 // range maps, eggs (museum collections like MHNT), skeletons, drawings…
+// Checked against file names (underscores turned into spaces) in several
+// languages: egg/œuf/Ei/Gelege/uovo/huevo, nest/nid/Nest, museum skins…
 const NON_PHOTO =
-  /\bmap\b|distribution|range map|\beggs?\b|\bnest\b|skull|skeleton|specimen|museum|mhnt|naturalis|drawing|illustration|diagram|stamp|logo|feather/i;
+  /\bmaps?\b|distribution|\brange\b|\beggs?\b|œufs?|\b(?:oeufs?|ei|eier|uov[oa]|huevos?)\b|gelege|clutch|\bnests?\b|\bnids?\b|skull|skelet|specimen|museum|muséum|mhnt|naturalis|taxiderm|stuffed|mounted|drawing|illustration|diagram|stamp|logo|feathers?\b|sonogram|spectrogram/i;
+
+// Same idea for the Commons categories a file is filed under, which catch
+// egg photos with uninformative names (e.g. "Turdus merula MHNT 2010 …").
+const BAD_CATEGORY =
+  /\beggs?\b|oeufs?|œufs?|\beier\b|gelege|\bnests?\b|\bnids?\b|museum|muséum|mhnt|naturalis|specimen|taxiderm|skelet|skull|natural history collection|feathers\b/i;
+
+const isNonPhoto = (title) => NON_PHOTO.test(title.replace(/_/g, " "));
+const hasBadCategory = (cats) => (cats || []).some((c) => BAD_CATEGORY.test(c.title));
+
+// Categories of up to 50 Commons files at once: { "File:X.jpg": [cat, …] }.
+async function commonsCategories(titles) {
+  const out = {};
+  for (let i = 0; i < titles.length; i += 50) {
+    const api =
+      "https://commons.wikimedia.org/w/api.php?action=query&format=json&origin=*" +
+      "&prop=categories&cllimit=max&titles=" + encodeURIComponent(titles.slice(i, i + 50).join("|"));
+    const res = await fetch(api);
+    if (!res.ok) continue;
+    const j = await res.json();
+    const norm = Object.fromEntries((j.query?.normalized || []).map((n) => [n.to, n.from]));
+    for (const pg of Object.values(j.query?.pages || {}))
+      out[norm[pg.title] || pg.title] = pg.categories || [];
+  }
+  return out;
+}
 
 // Switzerland bounding box; falls back to all of Europe for rarer species.
 const CH_BOX = "&swlat=45.8&swlng=5.9&nelat=47.85&nelng=10.5";
@@ -138,6 +165,8 @@ async function fetchINatImages(sci, box) {
   const url =
     "https://api.inaturalist.org/v1/observations?quality_grade=research&photos=true" +
     "&photo_license=cc0,cc-by,cc-by-sa,cc-by-nc,cc-by-nc-sa&per_page=40" +
+    // annotations: life stage "egg" (7); evidence = feather, scat, track, bone, molt
+    "&without_term_value_id=7,23,25,26,27,28" +
     "&taxon_name=" + encodeURIComponent(sci) + box;
   const res = await fetch(url);
   if (!res.ok) throw new Error("inaturalist " + res.status);
@@ -187,8 +216,8 @@ async function commonsSearch(sci, extra, limit) {
   const api =
     "https://commons.wikimedia.org/w/api.php?action=query&format=json&origin=*" +
     `&generator=search&gsrnamespace=6&gsrlimit=${limit}` +
-    "&prop=imageinfo&iiprop=url|size&iiurlwidth=960" +
-    "&gsrsearch=" + encodeURIComponent(`"${sci}" filetype:bitmap ${extra}`);
+    "&prop=imageinfo|categories&iiprop=url|size&iiurlwidth=960&cllimit=max" +
+    "&gsrsearch=" + encodeURIComponent(`"${sci}" filetype:bitmap -intitle:egg -intitle:eggs -intitle:MHNT ${extra}`);
   const res = await fetch(api);
   if (!res.ok) throw new Error("commons " + res.status);
   const j = await res.json();
@@ -197,7 +226,7 @@ async function commonsSearch(sci, extra, limit) {
     const info = p.imageinfo?.[0];
     if (!info) continue;
     if (!/\.jpe?g$/i.test(info.url)) continue; // maps/drawings are usually png/svg
-    if (NON_PHOTO.test(p.title)) continue;
+    if (isNonPhoto(p.title) || hasBadCategory(p.categories)) continue;
     if (info.width < 500 || info.height < 400) continue;
     imgs.push({
       w: Math.max(info.width, info.height),
@@ -216,10 +245,14 @@ async function fetchWikipediaGallery(sci, lang) {
   const res = await fetch(url);
   if (!res.ok) throw new Error("wikipedia media " + res.status);
   const j = await res.json();
+  const items = (j.items || []).filter(
+    (it) => it.type === "image" && /\.jpe?g$/i.test(it.title || "") && !isNonPhoto(it.title)
+  );
+  // Article galleries often include egg or museum photos with bland names.
+  const cats = await commonsCategories(items.map((it) => it.title)).catch(() => ({}));
   const imgs = [];
-  for (const it of j.items || []) {
-    if (it.type !== "image" || !/\.jpe?g$/i.test(it.title || "")) continue;
-    if (NON_PHOTO.test(it.title)) continue;
+  for (const it of items) {
+    if (hasBadCategory(cats[it.title])) continue;
     const srcs = (it.srcset || []).map((x) => (x.src.startsWith("//") ? "https:" + x.src : x.src));
     if (!srcs.length) continue;
     const big = srcs[srcs.length - 1];
