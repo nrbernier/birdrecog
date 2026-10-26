@@ -140,6 +140,7 @@ async function fetchINatImages(sci, box) {
     imgs.push({
       u: ph.url.replace("/square.", "/large."),
       f: ph.url.replace("/square.", "/medium."),
+      t: ph.url.replace("/square.", "/medium."), // smaller version for photo tiles
       p: "https://www.inaturalist.org/observations/" + obs.id,
       a: ph.attribution || "",
     });
@@ -196,11 +197,9 @@ async function getImages(sci) {
   if (isFresh(entry.imgs, entry.imgsAt, entry.imgsPartial)) return entry.imgs;
   const key = "img:" + sci;
   if (inflight[key]) return inflight[key];
-  return (inflight[key] = (async () => {
-    try {
-      const results = await Promise.allSettled([
-        fetchINat(sci), fetchWikipediaImage(sci), fetchCommonsImages(sci),
-      ]);
+  const inat = fetchINat(sci);
+  const all = Promise.allSettled([inat, fetchWikipediaImage(sci), fetchCommonsImages(sci)])
+    .then((results) => {
       if (results.every((r) => r.status === "rejected")) {
         if (entry.imgs?.length) return entry.imgs; // keep the stale list
         throw results[0].reason;
@@ -218,10 +217,15 @@ async function getImages(sci) {
       entry.imgsPartial = results.some((r) => r.status === "rejected");
       saveMedia();
       return entry.imgs;
-    } finally {
-      delete inflight[key];
-    }
-  })());
+    })
+    .finally(() => delete inflight[key]);
+  all.catch(() => {}); // handled by whoever awaits it below
+  // Don't wait for the slowest source: if iNaturalist alone has enough
+  // photos, use them now; Wikipedia/Commons get merged into the cache later.
+  return (inflight[key] = inat.then(
+    (imgs) => (imgs.length >= MIN_GOOD ? imgs : all),
+    () => all
+  ));
 }
 
 async function getAudio(sci) {
@@ -313,6 +317,8 @@ function activePool() {
 let round = null;    // { mode, n, score, streak, xpGained }
 let question = null; // { bird, qMode, answerKind, media, options:[{bird,img}] }
 let recent = [];     // recently asked species, avoided when picking
+const reserved = new Set(); // species of questions currently being prepared
+let upcoming = [];   // prefetched questions (promises), next one first
 const audio = new Audio();
 
 audio.addEventListener("ended", () => $("eq").classList.remove("playing"));
@@ -340,7 +346,7 @@ function pickDistractors(bird, n, lookalike) {
 function candidateBirds(kind) {
   const field = kind === "sound" ? "audio" : "imgs";
   return activePool().filter((b) => {
-    if (recent.includes(b.sci)) return false;
+    if (recent.includes(b.sci) || reserved.has(b.sci)) return false;
     const cached = mediaCache[b.sci]?.[field];
     return cached === undefined || cached.length > 0;
   });
@@ -378,6 +384,8 @@ async function makeQuestion(mode) {
   // instead of hammering the APIs for every species.
   const cands = orderCandidates(candidateBirds(qMode), mode === "review").slice(0, 8);
   for (const bird of cands) {
+    if (reserved.has(bird.sci)) continue;
+    reserved.add(bird.sci);
     try {
       let media = null;
       if (sub === "sound" || sub === "soundphoto") media = pickMedia(bird.sci, await getAudio(bird.sci));
@@ -389,7 +397,7 @@ async function makeQuestion(mode) {
         options = [bird, ...pickDistractors(bird, N_OPTIONS - 1, lookalike)].map((b) => ({ bird: b }));
       } else {
         // Photo answers: need a photo for the target and for each distractor.
-        const pool = [bird, ...pickDistractors(bird, N_OPTIONS + 3, lookalike)];
+        const pool = [bird, ...pickDistractors(bird, N_OPTIONS + 1, lookalike)];
         const got = await Promise.all(pool.map((b) => photoFor(b).catch(() => null)));
         if (!got[0]) continue;
         options = [{ bird, img: got[0] }];
@@ -403,9 +411,55 @@ async function makeQuestion(mode) {
       return { bird, qMode: sub === "pickphoto" ? "none" : qMode, answerKind, media, options: shuffle(options) };
     } catch (e) {
       console.warn("media fetch failed for", bird.sci, e);
+    } finally {
+      reserved.delete(bird.sci);
     }
   }
   return null; // everything failed (offline?)
+}
+
+/* ---------- prefetching ---------- */
+
+const PREFETCH = 2; // questions prepared ahead while you answer
+
+function preloadImage(url) {
+  return new Promise((resolve) => {
+    if (!url) return resolve();
+    const im = new Image();
+    const done = () => resolve();
+    im.onload = im.onerror = done;
+    setTimeout(done, 10000); // don't hold the question back forever
+    im.src = url;
+  });
+}
+
+const tileUrl = (img) => img.t || img.u;
+
+// Download the question's photos / recording so it shows instantly.
+async function preloadQuestion(q) {
+  if (!q) return q;
+  const urls = [];
+  if (q.qMode === "photo") urls.push(q.media.u);
+  if (q.answerKind === "photo") for (const o of q.options) urls.push(tileUrl(o.img));
+  if (q.qMode === "sound") {
+    const a = new Audio();
+    a.preload = "auto";
+    a.src = q.media.u;
+    q.audioEl = a;
+  }
+  await Promise.all(urls.map(preloadImage));
+  return q;
+}
+
+function fillQueue() {
+  const r = round;
+  if (!r) return;
+  while (upcoming.length < PREFETCH && r.made < ROUND_LEN) {
+    r.made++;
+    const p = makeQuestion(r.mode).then(preloadQuestion);
+    p.catch(() => {});
+    upcoming.push(p);
+  }
 }
 
 /* ---------- rendering ---------- */
@@ -499,9 +553,11 @@ async function nextQuestion() {
   $("question-text").textContent = "…";
 
   const myRound = round;
-  question = await makeQuestion(round.mode);
+  if (!upcoming.length) { round.made = Math.max(round.made, round.n); fillQueue(); }
+  question = await upcoming.shift().catch(() => null);
+  if (round === myRound) fillQueue(); // start preparing the one after
   if (round !== myRound) return; // user quit while loading
-  if (!question) return showMediaError();
+  if (!question) { round.made--; return showMediaError(); }
 
   const q = question;
   if (q.qMode === "none") {
@@ -517,6 +573,7 @@ async function nextQuestion() {
     $("media-sound").classList.remove("hidden");
     $("play-hint").textContent = t.playHint;
     audio.src = q.media.u;
+    audio.load();
   } else {
     $("question-text").textContent = t.whichBird;
     // keep the spinner up until the new photo has actually loaded
@@ -542,7 +599,7 @@ async function nextQuestion() {
       im.alt = "?";
       im.draggable = false;
       im.onerror = () => { im.onerror = null; im.src = opt.img.f; };
-      im.src = opt.img.u;
+      im.src = tileUrl(opt.img);
       const cap = document.createElement("span");
       cap.className = "photo-cap";
       cap.textContent = opt.bird[stats.lang];
@@ -631,7 +688,8 @@ function renderResults() {
 /* ---------- flow ---------- */
 
 function startRound(mode) {
-  round = { mode, n: 0, score: 0, streak: 0, xpGained: 0 };
+  round = { mode, n: 0, made: 0, score: 0, streak: 0, xpGained: 0 };
+  upcoming = [];
   show("quiz");
   nextQuestion();
 }
@@ -653,7 +711,7 @@ $("btn-play").onclick = () => {
 };
 $("btn-next").onclick = () => (round.n >= ROUND_LEN ? renderResults() : nextQuestion());
 $("btn-retry").onclick = () => nextQuestion();
-$("btn-quit").onclick = () => { round = null; audio.pause(); renderHome(); };
+$("btn-quit").onclick = () => { round = null; upcoming = []; audio.pause(); renderHome(); };
 $("btn-again").onclick = () => startRound(round.mode);
 $("btn-home").onclick = () => renderHome();
 
