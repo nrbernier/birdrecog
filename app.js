@@ -75,9 +75,9 @@ const MODE_ICONS = { photo: "📷", sound: "🎵", pickphoto: "🔍", soundphoto
 /* ---------- persistent state ---------- */
 
 const STATS_KEY = "birdrecog.stats.v1";
-const MEDIA_KEY = "birdrecog.media.v4"; // v4: photos carry a quality tier
+const MEDIA_KEY = "birdrecog.media.v5"; // v5: Wikipedia galleries + photo scores
 const SEEN_KEY = "birdrecog.seen.v1";   // recently shown media per species
-for (const old of ["birdrecog.media.v2", "birdrecog.media.v3"]) localStorage.removeItem(old);
+for (const old of ["birdrecog.media.v2", "birdrecog.media.v3", "birdrecog.media.v4"]) localStorage.removeItem(old);
 
 function load(key, dflt) {
   try { return JSON.parse(localStorage.getItem(key)) || dflt; } catch { return dflt; }
@@ -106,9 +106,10 @@ const RETRY_MS = 10 * 60e3;      // thin / partial results are retried after 10 
 const MAX_IMGS = 50;
 
 /* Photo quality tiers (img.q):
-   1 = curated: Wikipedia lead image, Commons "Quality images" and
-       "Featured pictures" (reviewed by the Commons community)
-   2 = decent: large Commons photos, iNaturalist photos others have faved
+   1 = curated: photos in the species' Wikipedia articles (en/fr/de),
+       Commons "Quality images" and "Featured pictures", and iNaturalist
+       photos faved by 3+ people
+   2 = decent: large Commons photos, iNaturalist photos faved at least once
    3 = rough: everything else — distant, blurry, odd angles, low resolution
    New birds are shown with tier 1 photos only; harder tiers are mixed in
    as you get a species right more often (see maxTierFor). */
@@ -148,7 +149,8 @@ async function fetchINatImages(sci, box) {
     const dim = ph.original_dimensions;
     const lowRes = dim && Math.max(dim.width, dim.height) < 1000;
     imgs.push({
-      q: obs.faves_count > 0 && !lowRes ? 2 : 3,
+      q: lowRes ? 3 : obs.faves_count >= 3 ? 1 : obs.faves_count >= 1 ? 2 : 3,
+      s: (obs.faves_count || 0) + (lowRes ? 0 : 0.5), // ranks photos within a tier
       u: ph.url.replace("/square.", "/large."),
       f: ph.url.replace("/square.", "/medium."),
       t: ph.url.replace("/square.", "/medium."), // smaller version for photo tiles
@@ -177,7 +179,7 @@ async function fetchWikipediaImage(sci) {
   const src = j.originalimage && j.originalimage.width < 960
     ? j.originalimage.source
     : j.thumbnail.source.replace(/\/\d+px-/, "/960px-");
-  return [{ q: 1, u: src, f: j.thumbnail.source, p: j.content_urls?.desktop?.page || "", a: "Wikipedia" }];
+  return [{ q: 1, s: 3, u: src, f: j.thumbnail.source, p: j.content_urls?.desktop?.page || "", a: "Wikipedia" }];
 }
 
 // Commons file search. `extra` narrows it, e.g. to curated categories.
@@ -205,19 +207,59 @@ async function commonsSearch(sci, extra, limit) {
   return imgs;
 }
 
+// All photos used in the species' Wikipedia articles: chosen by editors, so
+// usually clear identification shots. Different languages pick different ones.
+async function fetchWikipediaGallery(sci, lang) {
+  const url =
+    `https://${lang}.wikipedia.org/api/rest_v1/page/media-list/` +
+    encodeURIComponent(sci.replace(/ /g, "_"));
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("wikipedia media " + res.status);
+  const j = await res.json();
+  const imgs = [];
+  for (const it of j.items || []) {
+    if (it.type !== "image" || !/\.jpe?g$/i.test(it.title || "")) continue;
+    if (NON_PHOTO.test(it.title)) continue;
+    const srcs = (it.srcset || []).map((x) => (x.src.startsWith("//") ? "https:" + x.src : x.src));
+    if (!srcs.length) continue;
+    const big = srcs[srcs.length - 1];
+    imgs.push({
+      q: 1, s: it.leadImage ? 3 : 2,
+      u: /\/\d+px-/.test(big) ? big.replace(/\/\d+px-/, "/960px-") : big,
+      f: big,
+      p: "https://commons.wikimedia.org/wiki/" + encodeURIComponent(it.title.replace(/ /g, "_")),
+      a: "Wikipedia",
+    });
+  }
+  return imgs;
+}
+
+const fetchWikipediaGalleries = (sci) =>
+  Promise.allSettled(["en", "fr", "de"].map((l) => fetchWikipediaGallery(sci, l))).then((rs) => {
+    if (rs.every((r) => r.status === "rejected")) throw rs[0].reason;
+    return rs.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
+  });
+
 const fetchCommonsCurated = (sci) =>
   commonsSearch(sci, "incategory:Quality_images|Featured_pictures_on_Wikimedia_Commons", 30)
-    .then((imgs) => imgs.map(({ w, ...img }) => ({ ...img, q: 1 })));
+    .then((imgs) => imgs.map(({ w, ...img }) => ({ ...img, q: 1, s: 2 })));
 
 const fetchCommonsImages = (sci) =>
   commonsSearch(sci, "", 30)
-    .then((imgs) => imgs.map(({ w, ...img }) => ({ ...img, q: w >= 1600 ? 2 : 3 })));
+    .then((imgs) => imgs.map(({ w, ...img }) => ({ ...img, q: w >= 1600 ? 2 : 3, s: w / 1000 })));
 
 // Give up on a slow source instead of holding the whole question back.
 const withTimeout = (p, ms) =>
   Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
 
 const inflight = {};
+
+// Wikimedia serves one file at many sizes (…/thumb/x/xy/Name.jpg/960px-Name.jpg);
+// identify it by file name so the same picture isn't counted twice.
+function fileKey(url) {
+  if (!/wikimedia|wikipedia/.test(url)) return url;
+  return decodeURIComponent(url.split("/").pop()).replace(/^\d+px-/, "").toLowerCase();
+}
 
 async function getImages(sci) {
   const entry = cacheEntry(sci);
@@ -226,7 +268,8 @@ async function getImages(sci) {
   if (inflight[key]) return inflight[key];
   return (inflight[key] = (async () => {
     try {
-      const sources = [fetchWikipediaImage, fetchCommonsCurated, fetchCommonsImages, fetchINat];
+      const sources = [fetchWikipediaImage, fetchWikipediaGalleries, fetchCommonsCurated,
+                       fetchCommonsImages, fetchINat];
       const results = await Promise.allSettled(sources.map((f) => withTimeout(f(sci), 9000)));
       if (results.every((r) => r.status === "rejected")) {
         if (entry.imgs?.length) return entry.imgs; // keep the stale list
@@ -237,10 +280,13 @@ async function getImages(sci) {
       for (const r of results)
         if (r.status === "fulfilled")
           for (const img of r.value) {
-            const prev = byUrl.get(img.u);
-            if (!prev || img.q < prev.q) byUrl.set(img.u, img);
+            const k = fileKey(img.u);
+            const prev = byUrl.get(k);
+            if (!prev || img.q < prev.q) byUrl.set(k, img);
           }
-      const imgs = [...byUrl.values()].sort((a, b) => a.q - b.q).slice(0, MAX_IMGS);
+      const imgs = [...byUrl.values()]
+        .sort((a, b) => a.q - b.q || (b.s || 0) - (a.s || 0))
+        .slice(0, MAX_IMGS);
       // Don't let a flaky refresh shrink a good list we already had.
       if ((entry.imgs?.length || 0) > imgs.length) return entry.imgs;
       entry.imgs = imgs;
@@ -396,19 +442,20 @@ function orderCandidates(cands, review) {
 // How rough a photo may be for this bird, given how well you know it.
 function maxTierFor(sci) {
   const [right] = spStats(sci);
-  return right < 2 ? 1 : right < 5 ? 2 : 3;
+  return right < 2 ? 1 : right < 4 ? 2 : 3;
 }
 
+const MIN_VARIETY = 6; // never cycle through fewer photos than this
+
 async function photoFor(bird) {
-  const imgs = await getImages(bird.sci);
+  const imgs = await getImages(bird.sci); // sorted best first
   if (!imgs?.length) return null;
   const max = maxTierFor(bird.sci);
-  let allowed = imgs.filter((m) => m.q <= max);
-  // No photo good enough? Fall back to the best tier this bird has.
-  if (!allowed.length) {
-    const best = Math.min(...imgs.map((m) => m.q));
-    allowed = imgs.filter((m) => m.q === best);
-  }
+  const allowed = imgs.filter((m) => m.q <= max);
+  // Too few good photos for this bird? Top up with the best-ranked of the
+  // rest rather than showing the same two pictures over and over.
+  for (const m of imgs)
+    if (allowed.length < MIN_VARIETY && m.q > max) allowed.push(m);
   return pickMedia(bird.sci, allowed);
 }
 
