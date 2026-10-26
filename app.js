@@ -35,6 +35,10 @@ const T = {
     roundDone: "Round complete!", xpGained: "XP earned",
     playAgain: "Play again", home: "Menu",
     source: "Recording source", photoSource: "Photo source",
+    hidePhoto: "🚩 No usable bird in this photo? Hide it",
+    hidePhotos: "🚩 Tap a photo's flag to hide it for good",
+    hidden: "Photo hidden — it won't come back (tap to undo)",
+    notCounted: "This question won't count against you",
     credits: "Photos: iNaturalist, Wikipedia & Wikimedia Commons · Sounds: Wikimedia Commons / xeno-canto",
     xpToNext: "XP to next level",
   },
@@ -63,6 +67,10 @@ const T = {
     roundDone: "Manche terminée !", xpGained: "XP gagnés",
     playAgain: "Rejouer", home: "Menu",
     source: "Source de l'enregistrement", photoSource: "Source de la photo",
+    hidePhoto: "🚩 Pas d'oiseau reconnaissable ? Masquer la photo",
+    hidePhotos: "🚩 Touche le drapeau d'une photo pour la masquer",
+    hidden: "Photo masquée — elle ne reviendra plus (touche pour annuler)",
+    notCounted: "Cette question ne compte pas contre toi",
     credits: "Photos : iNaturalist, Wikipédia & Wikimedia Commons · Sons : Wikimedia Commons / xeno-canto",
     xpToNext: "XP avant le prochain niveau",
   },
@@ -77,6 +85,7 @@ const MODE_ICONS = { photo: "📷", sound: "🎵", pickphoto: "🔍", soundphoto
 const STATS_KEY = "birdrecog.stats.v1";
 const MEDIA_KEY = "birdrecog.media.v6"; // v6: stricter egg/nest/museum filtering
 const SEEN_KEY = "birdrecog.seen.v1";   // recently shown media per species
+const HIDDEN_KEY = "birdrecog.hidden.v1"; // photos the player flagged as unusable
 for (const old of ["birdrecog.media.v2", "birdrecog.media.v3", "birdrecog.media.v4", "birdrecog.media.v5"]) localStorage.removeItem(old);
 
 function load(key, dflt) {
@@ -97,6 +106,8 @@ const seen = load(SEEN_KEY, {});
 const saveStats = () => store(STATS_KEY, stats);
 const saveMedia = () => store(MEDIA_KEY, mediaCache);
 const saveSeen = () => store(SEEN_KEY, seen);
+const hiddenPhotos = new Set(load(HIDDEN_KEY, []));
+const saveHidden = () => store(HIDDEN_KEY, [...hiddenPhotos]);
 
 /* ---------- media fetching ---------- */
 
@@ -481,8 +492,8 @@ function maxTierFor(sci) {
 const MIN_VARIETY = 6; // never cycle through fewer photos than this
 
 async function photoFor(bird) {
-  const imgs = await getImages(bird.sci); // sorted best first
-  if (!imgs?.length) return null;
+  const imgs = (await getImages(bird.sci)).filter((m) => !hiddenPhotos.has(fileKey(m.u))); // best first
+  if (!imgs.length) return null;
   const max = maxTierFor(bird.sci);
   const allowed = imgs.filter((m) => m.q <= max);
   // Too few good photos for this bird? Top up with the best-ranked of the
@@ -725,11 +736,20 @@ async function nextQuestion() {
       cap.className = "photo-cap";
       cap.textContent = opt.bird[stats.lang];
       btn.append(im, cap);
+      const tile = document.createElement("div");
+      tile.className = "tile";
+      const flag = document.createElement("button");
+      flag.className = "tile-flag";
+      flag.textContent = "🚩";
+      flag.setAttribute("aria-label", "Hide this photo");
+      flag.onclick = () => flag.classList.toggle("on", toggleHidden(opt.img));
+      tile.append(btn, flag);
+      $("options").appendChild(tile);
     } else {
       btn.textContent = opt.bird[stats.lang];
+      $("options").appendChild(btn);
     }
     btn.onclick = () => answer(opt.bird, btn);
-    $("options").appendChild(btn);
   }
 }
 
@@ -756,10 +776,11 @@ function answer(chosen, btn) {
     cs[1]++;
     round.streak = 0;
   }
+  q.result = { good, chosen, refunded: false };
   saveStats();
 
   let correctBtn;
-  for (const el of $("options").children) {
+  for (const el of $("options").querySelectorAll(".option-btn")) {
     el.disabled = true;
     if (el.dataset.sci === q.bird.sci) {
       el.classList.add("correct");
@@ -789,7 +810,41 @@ function answer(chosen, btn) {
     ? t.source
     : t.photoSource + (photo?.a ? " · " + photo.a : "");
   src.href = srcMedia?.p || "#";
+
+  // Flag unusable photos (no visible bird, wrong subject…).
+  const hb = $("btn-hide");
+  hb.classList.toggle("hidden", q.qMode === "sound" && q.answerKind === "name");
+  hb.classList.remove("on");
+  hb.disabled = q.answerKind === "photo";
+  hb.textContent = q.answerKind === "photo" ? t.hidePhotos : t.hidePhoto;
+  hb.onclick = () => {
+    const on = toggleHidden(q.media);
+    hb.classList.toggle("on", on);
+    hb.textContent = on ? t.hidden : t.hidePhoto;
+  };
   $("btn-next").textContent = round.n >= ROUND_LEN ? t.finish : t.next;
+}
+
+// Hide (or un-hide) a photo for good. Returns whether it is now hidden.
+// A wrong answer on a question with an unusable photo is refunded.
+function toggleHidden(img) {
+  const k = fileKey(img.u);
+  const on = !hiddenPhotos.has(k);
+  if (on) hiddenPhotos.add(k);
+  else hiddenPhotos.delete(k);
+  saveHidden();
+  const r = question?.result;
+  if (on && r && !r.good && !r.refunded) {
+    r.refunded = true;
+    stats.total--;
+    for (const sci of [question.bird.sci, r.chosen.sci]) {
+      const sp = stats.sp[sci];
+      if (sp && sp[1] > 0) sp[1]--;
+    }
+    saveStats();
+    $("feedback-title").textContent = tr().notCounted;
+  }
+  return on;
 }
 
 function renderResults() {

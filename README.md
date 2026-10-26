@@ -65,6 +65,12 @@ blocked by the browser.)
   being cached for good. Each answer screen links to the source
   file page.
 
+- **Hiding bad photos**: after answering, tap *🚩 Hide it* under a photo
+  question (or the 🚩 on a tile in the photo-answer modes) when there's no
+  usable bird in the picture. Hidden photos never come back on that device,
+  and if you answered wrong, the question doesn't count against you. Tap
+  again to undo.
+
 ## Files
 
 - `index.html` — markup for the three screens (home / quiz / results)

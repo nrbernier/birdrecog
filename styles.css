@@ -142,7 +142,7 @@ body {
 
 .media-error { text-align: center; padding: 24px; color: var(--muted); display: flex; flex-direction: column; gap: 12px; }
 
-#screen-quiz.answered { padding-bottom: 190px; }
+#screen-quiz.answered { padding-bottom: 215px; }
 
 .options { display: flex; flex-direction: column; gap: 10px; }
 .option-btn {
@@ -162,6 +162,21 @@ body {
   padding: 0; overflow: hidden; position: relative; aspect-ratio: 1;
   background: #0a140e; border-width: 3px;
 }
+.tile { position: relative; }
+.tile .option-btn { width: 100%; }
+.tile-flag {
+  position: absolute; top: 6px; right: 6px; width: 34px; height: 34px;
+  border: none; border-radius: 50%; background: rgba(10, 20, 14, .7);
+  font-size: 16px; cursor: pointer; display: none; opacity: .75;
+}
+#screen-quiz.answered .tile-flag { display: block; }
+.tile-flag.on { opacity: 1; background: var(--wrong); }
+.hide-btn {
+  background: none; border: none; color: var(--muted); font-size: 12px;
+  cursor: pointer; padding: 4px; text-decoration: underline;
+}
+.hide-btn:disabled { text-decoration: none; cursor: default; }
+.hide-btn.on { color: var(--wrong); }
 .photo-opt img { width: 100%; height: 100%; object-fit: cover; display: block; user-select: none; }
 .photo-cap {
   position: absolute; left: 0; right: 0; bottom: 0; padding: 6px 8px;
